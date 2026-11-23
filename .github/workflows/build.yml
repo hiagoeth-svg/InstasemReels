@@ -1,0 +1,41 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Instalar XcodeGen e gerar projeto
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compilar aplicativo sem assinatura
+        run: |
+          xcodebuild -project InstaSemReels.xcodeproj \
+            -scheme InstaSemReels \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Empacotar em .ipa
+        run: |
+          mkdir -p Payload
+          cp -r build/Build/Products/Release-iphoneos/InstaSemReels.app Payload/
+          zip -r InstaSemReels.ipa Payload
+
+      - name: Disponibilizar .ipa para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: InstaSemReels-IPA
+          path: InstaSemReels.ipa
