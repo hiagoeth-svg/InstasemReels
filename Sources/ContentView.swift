@@ -5,34 +5,80 @@ struct InstagramCleanerView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let contentController = WKUserContentController()
         
-        // Script CSS + JS para ocultar a aba Reels e bloquear o scroll infinito
-        let blockReelsScript = """
+        // Usamos #""" para permitir regex no JavaScript sem conflito no Swift
+        let blockReelsScript = #"""
         (function() {
+            // 1. Oculta o botão da aba Reels na navegação sem esconder links enviados na DM
             const style = document.createElement('style');
             style.innerHTML = `
-                /* Oculta o ícone do Reels na barra de navegação inferior/lateral */
-                a[href*="/reels/"], 
+                a[href="/reels/"],
                 a[href="/reels"] {
                     display: none !important;
-                }
-                /* Oculta carrosséis de Reels sugeridos no feed */
-                article:has(a[href*="/reel/"]) {
-                    /* Opcional: remova o comentário abaixo se também quiser esconder Reels do feed */
-                    /* display: none !important; */
                 }
             `;
             document.documentElement.appendChild(style);
 
-            // Impede navegação direta para a aba de feed infinito do Reels (/reels/),
-            // mas permite abrir um Reel individual (/reel/ID) enviado por DM
-            const observer = new MutationObserver(() => {
-                if (window.location.pathname.startsWith('/reels')) {
+            let allowedReelId = null;
+            let isRedirecting = false;
+
+            function getReelId(pathname) {
+                const match = pathname.match(/^\/reels?\/([^\/]+)/);
+                return match ? match[1] : null;
+            }
+
+            function isReelsTab(pathname) {
+                return pathname === '/reels' || pathname === '/reels/';
+            }
+
+            // 2. Vigia a URL: permite apenas o 1º Reel aberto via DM e bloqueia o próximo
+            function checkRoute() {
+                const path = window.location.pathname;
+
+                if (isReelsTab(path)) {
+                    allowedReelId = null;
                     window.location.replace('/');
+                    return;
                 }
-            });
-            observer.observe(document.body, { childList: true, subtree: true });
+
+                const currentId = getReelId(path);
+
+                if (currentId) {
+                    if (!allowedReelId) {
+                        allowedReelId = currentId;
+                    } else if (allowedReelId !== currentId && !isRedirecting) {
+                        isRedirecting = true;
+                        allowedReelId = null;
+                        window.history.back();
+                        setTimeout(() => { isRedirecting = false; }, 600);
+                    }
+                } else {
+                    // Ao voltar para o Direct ou Feed, libera para abrir outro link enviado
+                    allowedReelId = null;
+                }
+            }
+
+            // 3. Trava o gesto de deslizar para baixo/cima na tela do Reel
+            function blockScroll(e) {
+                if (getReelId(window.location.pathname)) {
+                    // Mantém o scroll funcionando dentro de modais (comentários / enviar)
+                    if (e.target && e.target.closest('[role="dialog"]')) {
+                        return;
+                    }
+                    e.preventDefault();
+                }
+            }
+
+            window.addEventListener('touchmove', blockScroll, { passive: false, capture: true });
+            window.addEventListener('wheel', blockScroll, { passive: false, capture: true });
+
+            const observer = new MutationObserver(checkRoute);
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+            window.addEventListener('popstate', checkRoute);
+            setInterval(checkRoute, 300);
+
+            checkRoute();
         })();
-        """
+        """#
         
         let userScript = WKUserScript(
             source: blockReelsScript,
